@@ -282,6 +282,34 @@ with tabs[0]:
                 if p["risk_notes"]:
                     st.markdown("**Risk notes:** " + p["risk_notes"])
 
+                with st.form(key=f"signoff-{p['id']}"):
+                    advisor = st.selectbox(
+                        "Advisor",
+                        ["bond_counsel", "municipal_advisor", "pid_admin"],
+                        key=f"sa-{p['id']}",
+                    )
+                    view = st.selectbox(
+                        "View", ["pending", "accepted", "hedged", "declined"],
+                        key=f"sv-{p['id']}",
+                    )
+                    notes = st.text_area("Notes", key=f"sn-{p['id']}", height=80)
+                    if st.form_submit_button("Record signoff"):
+                        column_map = {
+                            "bond_counsel": ("bond_counsel_view", "bond_counsel_notes"),
+                            "municipal_advisor": ("municipal_advisor_view", "municipal_advisor_notes"),
+                            "pid_admin": ("pid_admin_view", "pid_admin_notes"),
+                        }
+                        view_col, notes_col = column_map[advisor]
+                        with cursor() as cur:
+                            cur.execute(
+                                f"UPDATE pf_positions SET {view_col} = %s, "
+                                f"{notes_col} = %s, updated_at = NOW() WHERE id = %s",
+                                (view, notes or None, p["id"]),
+                            )
+                        st.cache_data.clear()
+                        st.success(f"Recorded {advisor}={view}")
+                        st.rerun()
+
     st.subheader("Packet history")
     if reim_rows:
         df = pd.DataFrame(reim_rows)[
@@ -315,6 +343,18 @@ with tabs[1]:
                     f"- **Document:** {r['document_uri']}\n"
                     f"- **Confidence:** {r.get('confidence') or 'n/a'}"
                 )
+                if r["agreed"] and not r["human_acked"]:
+                    if st.button("Mark acknowledged", key=f"ack-{r['id']}"):
+                        with cursor() as cur:
+                            cur.execute(
+                                "UPDATE dates SET human_acked = TRUE, "
+                                "human_acked_at = NOW(), updated_at = NOW() "
+                                "WHERE id = %s",
+                                (r["id"],),
+                            )
+                        st.cache_data.clear()
+                        st.success("Acknowledged.")
+                        st.rerun()
 
     st.subheader("Takedown schedules")
     td_rows = takedown_for(deal["id"])
