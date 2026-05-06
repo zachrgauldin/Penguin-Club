@@ -109,6 +109,11 @@ class GraphClient:
             if url and url.startswith(GRAPH_BASE):
                 url = url[len(GRAPH_BASE):]
 
+    def post(self, path: str, json: dict[str, Any]) -> dict[str, Any]:
+        r = self._client.post(path, json=json)
+        r.raise_for_status()
+        return r.json()
+
     def download(self, item: GraphFile, dest_path: str) -> int:
         if item.download_url:
             with httpx.stream("GET", item.download_url, timeout=120.0) as r:

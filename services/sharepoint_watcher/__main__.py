@@ -107,6 +107,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0 if result.files_failed == 0 else 3
 
 
+def cmd_push_calendar(args: argparse.Namespace) -> int:
+    from services.sharepoint_watcher.calendar_push import push_calendar
+
+    result = push_calendar(force=args.force)
+    print(json.dumps(result.__dict__, indent=2, default=str))
+    return 0 if result.failed == 0 else 3
+
+
 def cmd_takedown_forecast(args: argparse.Namespace) -> int:
     from services.sharepoint_watcher.takedown_forecast import render_takedown_forecast
 
@@ -247,6 +255,16 @@ def main() -> int:
     p_aa = sub.add_parser("ack-audit", help="Mark a weekly miss-audit acknowledged by the principal")
     p_aa.add_argument("--week-starting", required=True, help="ISO date for the audit week start")
     p_aa.set_defaults(func=cmd_ack_audit)
+
+    p_pc = sub.add_parser(
+        "push-calendar",
+        help="Push agreed + acked critical dates to the configured Outlook calendar",
+    )
+    p_pc.add_argument(
+        "--force", action="store_true",
+        help="Re-push every agreed+acked date, even if outlook_event_id is set",
+    )
+    p_pc.set_defaults(func=cmd_push_calendar)
 
     args = parser.parse_args()
     return args.func(args)
