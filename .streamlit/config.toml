@@ -1,0 +1,18 @@
+# Refinery night-shift theme — dark, dense, Bloomberg-y. Direction 2.
+# Custom typography (Inter Tight + IBM Plex Mono) is loaded via CSS injection
+# in services/chat_ui/app.py since Streamlit's `font` setting only accepts
+# the generic sans/serif/monospace families.
+
+[theme]
+base = "dark"
+primaryColor = "#4DA3FF"
+backgroundColor = "#0A1116"
+secondaryBackgroundColor = "#131C24"
+textColor = "#E0E6ED"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

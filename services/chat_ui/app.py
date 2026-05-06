@@ -1,12 +1,12 @@
-"""Streamlit dashboard for the three Wave-1 agents.
+"""Streamlit dashboard — Refinery night-shift console.
 
-Run with: streamlit run services/chat_ui/app.py
+Three roles, one app:
+  Principal  — live one-pager: capacity, dates, signals, open items.
+  Analyst    — daily ops console: classification queue, unacked dates, miss-audit.
+  Advisor    — proposal review portal: filter by advisor, sign off inline.
 
-Read-only against Postgres for the live state of the firm. Action
-buttons (run classify, run digest, run weekly-audit) wrap the
-service-side commands so an analyst doesn't need to leave the UI.
-The principal's "live one-page deal dashboard" wish-list item maps to
-the Reimbursement → Registry sub-tab.
+Theme baseline lives in .streamlit/config.toml; typography (Inter Tight +
+IBM Plex Mono) and density tweaks are injected via the CSS block below.
 """
 from __future__ import annotations
 
@@ -20,7 +20,111 @@ from services.common.config import pilot_config
 from services.common.db import cursor
 
 
-st.set_page_config(page_title="Penguin-Club", layout="wide")
+st.set_page_config(page_title="Penguin-Club", layout="wide", initial_sidebar_state="expanded")
+
+
+# ---------------- Theme overrides ----------------
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+html, body, [class*="css"], .stApp, p, span, div, button, label {
+    font-family: 'Inter Tight', system-ui, -apple-system, sans-serif !important;
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter Tight', system-ui, sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+}
+
+h1 { font-size: 1.5rem !important; }
+h2 { font-size: 1.15rem !important; margin-top: 1.5rem !important; }
+h3 { font-size: 1.0rem !important; }
+
+[data-testid="stMetricValue"], [data-testid="stMetricDelta"] {
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace !important;
+    font-weight: 500 !important;
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 0.72rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #7A8794 !important;
+}
+
+[data-testid="stMetricValue"] { font-size: 1.6rem !important; color: #E0E6ED; }
+
+[data-testid="stDataFrame"] {
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 12.5px !important;
+}
+
+.stDataFrame table th { background-color: #131C24 !important; color: #7A8794 !important; }
+
+.block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
+
+[data-testid="stSidebar"] { background-color: #0D1419 !important; }
+
+.stExpander { border: 1px solid #1E2A33 !important; border-radius: 4px !important; }
+
+.stButton > button {
+    border: 1px solid #2D3F4D !important;
+    background-color: transparent !important;
+    color: #E0E6ED !important;
+    font-weight: 500 !important;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.stButton > button:hover {
+    border-color: #4DA3FF !important;
+    background-color: rgba(77,163,255,0.08) !important;
+}
+
+.pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.pill-critical { background: #E8C547; color: #0A1116; }
+.pill-warn     { background: rgba(232,197,71,0.14); color: #E8C547; border: 1px solid rgba(232,197,71,0.4); }
+.pill-info     { background: rgba(77,163,255,0.14); color: #4DA3FF; border: 1px solid rgba(77,163,255,0.4); }
+.pill-ok       { background: rgba(98,196,140,0.14); color: #62C48C; border: 1px solid rgba(98,196,140,0.4); }
+.pill-muted    { background: rgba(122,135,148,0.14); color: #7A8794; border: 1px solid rgba(122,135,148,0.3); }
+
+.kv-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #1E2A33; }
+.kv-key { color: #7A8794; font-size: 0.85rem; }
+.kv-val { color: #E0E6ED; font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem; }
+
+.section-rule { height: 1px; background: #1E2A33; margin: 1rem 0 0.5rem 0; }
+
+a { color: #4DA3FF !important; text-decoration: none !important; }
+a:hover { text-decoration: underline !important; }
+</style>
+"""
+
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+def pill(text: str, kind: str = "muted") -> str:
+    return f'<span class="pill pill-{kind}">{text}</span>'
+
+
+def impact_pill(score: int) -> str:
+    if score >= 4:
+        return pill(f"impact {score}", "warn")
+    if score >= 2:
+        return pill(f"impact {score}", "info")
+    return pill(f"impact {score}", "muted")
 
 
 # ---------------- DB helpers (cached) ----------------
@@ -73,7 +177,7 @@ def positions_for(deal_id: str) -> list[dict[str, Any]]:
             """
             SELECT id, family, title, estimated_dollars,
                    bond_counsel_view, municipal_advisor_view, pid_admin_view,
-                   incorporated_into, risk_notes, created_at
+                   incorporated_into, risk_notes, proposal, created_at
             FROM pf_positions
             WHERE deal_id = %s
             ORDER BY created_at DESC
@@ -111,9 +215,12 @@ def classification_summary(deal_id: str) -> dict[str, Any]:
               (SELECT COUNT(*) FROM cost_ledger cl
                 WHERE cl.deal_id = %s
                   AND NOT EXISTS (SELECT 1 FROM ledger_classifications lc WHERE lc.cost_ledger_id = cl.id)
-              ) AS pending_lines
+              ) AS pending_lines,
+              (SELECT COUNT(*) FROM ledger_classifications lc
+                JOIN cost_ledger cl ON cl.id = lc.cost_ledger_id
+                WHERE cl.deal_id = %s AND lc.advisor_review = 'pending') AS pending_review
             """,
-            (deal_id, deal_id),
+            (deal_id, deal_id, deal_id),
         )
         return dict(cur.fetchone())
 
@@ -135,6 +242,41 @@ def upcoming_dates(deal_id: str, horizon_days: int = 60) -> list[dict[str, Any]]
             ORDER BY d.value ASC, d.is_critical DESC
             """,
             (deal_id, horizon_days),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@st.cache_data(ttl=15)
+def unacked_critical_dates(deal_id: str) -> list[dict[str, Any]]:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.kind::text AS kind, d.label, d.value, d.source_ref,
+                   c.title AS contract_title, c.document_uri
+            FROM dates d
+            JOIN contracts c ON c.id = d.contract_id
+            WHERE c.deal_id = %s
+              AND d.is_critical = TRUE
+              AND d.agreed = TRUE
+              AND d.human_acked = FALSE
+            ORDER BY d.value ASC NULLS LAST
+            """,
+            (deal_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@st.cache_data(ttl=15)
+def parse_failures(deal_id: str) -> list[dict[str, Any]]:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, title, document_uri, parse_status, parse_error, created_at
+            FROM contracts
+            WHERE deal_id = %s AND parse_status IN ('needs_human', 'failed')
+            ORDER BY created_at DESC
+            """,
+            (deal_id,),
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -203,13 +345,12 @@ def digests_recent() -> list[dict[str, Any]]:
         return [dict(r) for r in cur.fetchall()]
 
 
-# ---------------- Layout ----------------
+# ---------------- Sidebar ----------------
 
 cfg = pilot_config()
-st.title("Penguin-Club")
-
 deals = list_deals()
 if not deals:
+    st.title("Penguin-Club")
     st.warning(
         "No deals in the database yet. Run "
         "`python -m services.reimbursement_api seed` to load the pilot config."
@@ -220,131 +361,186 @@ slugs = [d["slug"] for d in deals]
 default_idx = slugs.index(cfg["deal"]["slug"]) if cfg["deal"]["slug"] in slugs else 0
 
 with st.sidebar:
-    st.subheader("Deal")
-    slug = st.selectbox("Deal", slugs, index=default_idx, label_visibility="collapsed")
-    deal = deal_by_slug(slug)
-    st.caption(
-        f"{deal['jurisdiction']}, {deal['county']} County, {deal['state']}\n\n"
-        f"Status: {deal['status']}"
+    st.markdown("### PENGUIN — CLUB")
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
+    role = st.radio(
+        "Role",
+        ["Principal", "Analyst", "Advisor"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
-    st.divider()
-    st.caption("Cached views auto-refresh every 15s. Use the menu (⋮ → Rerun) to force.")
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
 
-tabs = st.tabs(["Reimbursement", "Contracts", "Lavon-watch"])
+    slug = st.selectbox("Deal", slugs, index=default_idx)
+    deal = deal_by_slug(slug)
+    st.markdown(
+        f'<div class="kv-row"><span class="kv-key">jurisdiction</span>'
+        f'<span class="kv-val">{deal["jurisdiction"]}</span></div>'
+        f'<div class="kv-row"><span class="kv-key">county</span>'
+        f'<span class="kv-val">{deal["county"]}, {deal["state"]}</span></div>'
+        f'<div class="kv-row"><span class="kv-key">status</span>'
+        f'<span class="kv-val">{deal["status"]}</span></div>',
+        unsafe_allow_html=True,
+    )
 
-# ---------------- Reimbursement ----------------
-
-with tabs[0]:
-    inst_rows = instruments_for(deal["id"])
-    pos_rows = positions_for(deal["id"])
-    reim_rows = reimbursements_for(deal["id"])
-    cls = classification_summary(deal["id"])
-
-    st.subheader("Registry — capacity")
-    if inst_rows:
-        df = pd.DataFrame(inst_rows)[
-            ["kind", "name", "status",
-             "authorized_amount", "issued_amount",
-             "capacity_remaining", "classified_eligible"]
-        ]
-        df.columns = ["kind", "name", "status",
-                      "authorized", "issued", "capacity remaining", "classified (pend+app)"]
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No instruments — run `seed`.")
-
-    col1, col2 = st.columns(2)
-    col1.metric("Cost-ledger lines", cls["total_lines"])
-    col2.metric("Pending classification", cls["pending_lines"])
-
-    st.subheader("Open structuring proposals")
-    open_pos = [
-        p for p in pos_rows
-        if "pending" in (
-            p["bond_counsel_view"], p["municipal_advisor_view"], p["pid_admin_view"]
+    if role == "Advisor":
+        st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+        advisor_role = st.radio(
+            "As advisor",
+            ["bond_counsel", "municipal_advisor", "pid_admin"],
         )
-    ]
-    if not open_pos:
-        st.success("Every position has all three advisor views recorded.")
-    else:
-        for p in open_pos[:20]:
-            with st.expander(
-                f"[{p['family']}] {p['title']} — "
-                f"${(p['estimated_dollars'] or 0):,.0f}"
-            ):
-                st.write(
-                    f"**Bond counsel:** {p['bond_counsel_view']}  "
-                    f"**Municipal advisor:** {p['municipal_advisor_view']}  "
-                    f"**PID admin:** {p['pid_admin_view']}"
-                )
-                if p["incorporated_into"]:
-                    st.caption(f"Incorporated into: {p['incorporated_into']}")
-                if p["risk_notes"]:
-                    st.markdown("**Risk notes:** " + p["risk_notes"])
 
-                with st.form(key=f"signoff-{p['id']}"):
-                    advisor = st.selectbox(
-                        "Advisor",
-                        ["bond_counsel", "municipal_advisor", "pid_admin"],
-                        key=f"sa-{p['id']}",
-                    )
-                    view = st.selectbox(
-                        "View", ["pending", "accepted", "hedged", "declined"],
-                        key=f"sv-{p['id']}",
-                    )
-                    notes = st.text_area("Notes", key=f"sn-{p['id']}", height=80)
-                    if st.form_submit_button("Record signoff"):
-                        column_map = {
-                            "bond_counsel": ("bond_counsel_view", "bond_counsel_notes"),
-                            "municipal_advisor": ("municipal_advisor_view", "municipal_advisor_notes"),
-                            "pid_admin": ("pid_admin_view", "pid_admin_notes"),
-                        }
-                        view_col, notes_col = column_map[advisor]
-                        with cursor() as cur:
-                            cur.execute(
-                                f"UPDATE pf_positions SET {view_col} = %s, "
-                                f"{notes_col} = %s, updated_at = NOW() WHERE id = %s",
-                                (view, notes or None, p["id"]),
-                            )
-                        st.cache_data.clear()
-                        st.success(f"Recorded {advisor}={view}")
-                        st.rerun()
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+    st.caption("Cached views refresh every 15s.")
 
-    st.subheader("Packet history")
-    if reim_rows:
-        df = pd.DataFrame(reim_rows)[
-            ["instrument_kind", "packet_number", "status",
-             "requested_amount", "approved_amount", "paid_amount",
-             "submitted_on", "paid_on", "packet_uri"]
+
+# ---------------- Shared queries / pre-computes ----------------
+
+inst_rows = instruments_for(deal["id"])
+pos_rows = positions_for(deal["id"])
+cls = classification_summary(deal["id"])
+unacked_dates = unacked_critical_dates(deal["id"])
+sig_rows = signals_recent()
+high_impact_recent = [s for s in sig_rows if s["impact_score"] >= 4][:8]
+
+
+def _capacity_total() -> float:
+    return sum(float(i["capacity_remaining"] or 0) for i in inst_rows)
+
+
+def _classified_total() -> float:
+    return sum(float(i["classified_eligible"] or 0) for i in inst_rows)
+
+
+# ---------------- Principal ----------------
+
+if role == "Principal":
+    st.markdown(f"# {deal['name']}")
+    st.caption(f"Live one-pager · {datetime.utcnow():%Y-%m-%d %H:%M UTC}")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Capacity remaining", f"${_capacity_total()/1_000_000:.2f}M")
+    c2.metric("Classified (pend+app)", f"${_classified_total()/1_000_000:.2f}M")
+    c3.metric("Pending classification", cls["pending_lines"])
+    c4.metric("Unacked critical dates", len(unacked_dates))
+    c5.metric("High-impact signals (recent)", len(high_impact_recent))
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
+    left, right = st.columns([3, 2])
+
+    with left:
+        st.markdown("## Open structuring proposals")
+        open_pos = [
+            p for p in pos_rows
+            if "pending" in (p["bond_counsel_view"], p["municipal_advisor_view"], p["pid_admin_view"])
         ]
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No packets generated yet. Run `package` once classifications are in.")
+        if not open_pos:
+            st.markdown(pill("ALL CLEAR", "ok") + " every position has all three advisor views recorded.", unsafe_allow_html=True)
+        else:
+            df = pd.DataFrame(
+                [
+                    {
+                        "$": float(p["estimated_dollars"] or 0),
+                        "family": p["family"],
+                        "title": p["title"],
+                        "BC": p["bond_counsel_view"],
+                        "MA": p["municipal_advisor_view"],
+                        "PA": p["pid_admin_view"],
+                    }
+                    for p in open_pos
+                ]
+            )
+            df["$"] = df["$"].map(lambda v: f"${v:,.0f}")
+            st.dataframe(df, use_container_width=True, hide_index=True, height=320)
 
-# ---------------- Contracts ----------------
+        st.markdown("## Upcoming critical dates")
+        upcoming = upcoming_dates(deal["id"], horizon_days=60)
+        critical_only = [r for r in upcoming if r["is_critical"]]
+        if not critical_only:
+            st.markdown(pill("NONE", "muted") + " no critical dates in the next 60 days.", unsafe_allow_html=True)
+        else:
+            df = pd.DataFrame(
+                [
+                    {
+                        "date": str(r["value"]),
+                        "kind": r["kind"],
+                        "label": r["label"],
+                        "agreed": "✓" if r["agreed"] else "—",
+                        "acked": "✓" if r["human_acked"] else "—",
+                        "contract": r["contract_title"],
+                    }
+                    for r in critical_only
+                ]
+            )
+            st.dataframe(df, use_container_width=True, hide_index=True, height=240)
 
-with tabs[1]:
-    st.subheader("Critical dates — next 60 days")
-    horizon = st.slider("Days ahead", min_value=14, max_value=180, value=60, step=14)
-    dates_rows = upcoming_dates(deal["id"], horizon_days=horizon)
-    if not dates_rows:
-        st.success(f"No agreed dates in the next {horizon} days — backfill more contracts or extend the horizon.")
-    else:
-        for r in dates_rows:
-            critical = "🔴" if r["is_critical"] else "•"
-            acked = "✅" if r["human_acked"] else "⚠️ unacked"
-            agreed = "✅" if r["agreed"] else "⚠️ not agreed"
-            with st.expander(
-                f"{critical} {r['value']} — {r['kind']} — {r['label']}  ({acked} / {agreed})"
-            ):
+    with right:
+        st.markdown("## High-impact signals")
+        if not high_impact_recent:
+            st.markdown(pill("QUIET", "muted") + " nothing scored 4+ in the recent window.", unsafe_allow_html=True)
+        else:
+            for s in high_impact_recent:
                 st.markdown(
-                    f"- **Contract:** {r['contract_title']} ({r['contract_kind']})\n"
-                    f"- **Source:** {r.get('source_ref') or '(none)'}\n"
-                    f"- **Document:** {r['document_uri']}\n"
-                    f"- **Confidence:** {r.get('confidence') or 'n/a'}"
+                    f'<div style="margin-bottom:0.7rem; padding-bottom:0.7rem; border-bottom:1px solid #1E2A33;">'
+                    f'{impact_pill(s["impact_score"])} '
+                    f'<span style="color:#7A8794; font-size:0.78rem;">{s["source"]} · {s["occurred_on"] or "n/a"}</span>'
+                    f'<div style="font-weight:500; margin-top:2px;">{s["title"]}</div>'
+                    f'<div style="color:#A8B2BC; font-size:0.85rem; margin-top:2px;">{(s["summary"] or "")[:200]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
-                if r["agreed"] and not r["human_acked"]:
-                    if st.button("Mark acknowledged", key=f"ack-{r['id']}"):
+
+        st.markdown("## Capacity by instrument")
+        if inst_rows:
+            for i in inst_rows:
+                cap = float(i["capacity_remaining"] or 0)
+                cl = float(i["classified_eligible"] or 0)
+                pct = (cl / cap * 100.0) if cap > 0 else 0.0
+                st.markdown(
+                    f'<div class="kv-row"><span class="kv-key">{i["kind"]} · {i["name"]}</span>'
+                    f'<span class="kv-val">${cap/1_000_000:.2f}M cap · {pct:.0f}% classified</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+
+# ---------------- Analyst ----------------
+
+elif role == "Analyst":
+    st.markdown(f"# {deal['name']} — ops console")
+    st.caption(f"Analyst surface · {datetime.utcnow():%Y-%m-%d %H:%M UTC}")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Pending classification", cls["pending_lines"])
+    c2.metric("Pending advisor review", cls["pending_review"])
+    c3.metric("Unacked critical dates", len(unacked_dates))
+    pf = parse_failures(deal["id"])
+    c4.metric("Parse failures", len(pf))
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
+    queues, actions = st.columns([3, 2])
+
+    with queues:
+        st.markdown("## Unacked critical dates")
+        if not unacked_dates:
+            st.markdown(pill("CLEAR", "ok"), unsafe_allow_html=True)
+        else:
+            for r in unacked_dates:
+                with st.container(border=True):
+                    cols = st.columns([1, 4, 1])
+                    cols[0].markdown(
+                        f'<span class="pill pill-critical">{str(r["value"])}</span>',
+                        unsafe_allow_html=True,
+                    )
+                    cols[1].markdown(
+                        f"**{r['kind']}** — {r['label']}<br>"
+                        f"<span style='color:#7A8794; font-size:0.82rem;'>"
+                        f"{r['contract_title']} · {r.get('source_ref') or '(no ref)'}</span>",
+                        unsafe_allow_html=True,
+                    )
+                    if cols[2].button("Ack", key=f"ack-{r['id']}"):
                         with cursor() as cur:
                             cur.execute(
                                 "UPDATE dates SET human_acked = TRUE, "
@@ -353,10 +549,48 @@ with tabs[1]:
                                 (r["id"],),
                             )
                         st.cache_data.clear()
-                        st.success("Acknowledged.")
                         st.rerun()
 
-    st.subheader("Takedown schedules")
+        st.markdown("## Parse failures")
+        if not pf:
+            st.markdown(pill("CLEAR", "ok"), unsafe_allow_html=True)
+        else:
+            df = pd.DataFrame(pf)[["title", "parse_status", "parse_error", "document_uri", "created_at"]]
+            st.dataframe(df, use_container_width=True, hide_index=True, height=240)
+
+        st.markdown("## Weekly miss-audit history")
+        audit_rows = weekly_audit_state()
+        if audit_rows:
+            df = pd.DataFrame(audit_rows)
+            st.dataframe(df, use_container_width=True, hide_index=True, height=240)
+        else:
+            st.markdown(pill("NONE", "muted") + " no miss-audit runs yet.", unsafe_allow_html=True)
+
+    with actions:
+        st.markdown("## Recent signals")
+        if not sig_rows:
+            st.markdown(pill("EMPTY", "muted") + " no signals ingested.", unsafe_allow_html=True)
+        else:
+            df = pd.DataFrame(sig_rows[:30])[
+                ["impact_score", "kind", "source", "title", "occurred_on", "source_url"]
+            ]
+            df.columns = ["impact", "kind", "source", "title", "date", "url"]
+            st.dataframe(df, use_container_width=True, hide_index=True, height=380)
+
+        st.markdown("## Quick actions")
+        st.caption("CLI commands. Wire to Streamlit click-to-run in V2.")
+        st.code(
+            "python -m services.reimbursement_api classify\n"
+            "python -m services.sharepoint_watcher weekly-audit\n"
+            "python -m services.signal_collectors scan\n"
+            "python -m services.signal_collectors digest-daily\n"
+            "python -m services.sharepoint_watcher push-calendar",
+            language="bash",
+        )
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
+    st.markdown("## Takedown schedules")
     td_rows = takedown_for(deal["id"])
     if td_rows:
         df = pd.DataFrame(td_rows)[
@@ -366,65 +600,96 @@ with tabs[1]:
         ]
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.info("No takedown schedules — extract a builder lot purchase or takedown agreement to populate.")
+        st.markdown(pill("NONE", "muted"), unsafe_allow_html=True)
 
-    st.subheader("Weekly miss-audit history")
-    audit_rows = weekly_audit_state()
-    if audit_rows:
-        df = pd.DataFrame(audit_rows)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+
+# ---------------- Advisor ----------------
+
+else:
+    advisor_label = {
+        "bond_counsel": "Bond counsel",
+        "municipal_advisor": "Municipal advisor",
+        "pid_admin": "PID administrator",
+    }[advisor_role]
+    view_col = {
+        "bond_counsel": "bond_counsel_view",
+        "municipal_advisor": "municipal_advisor_view",
+        "pid_admin": "pid_admin_view",
+    }[advisor_role]
+    notes_col = view_col.replace("_view", "_notes")
+
+    st.markdown(f"# Review portal — {advisor_label}")
+    st.caption(f"{deal['name']} · {datetime.utcnow():%Y-%m-%d %H:%M UTC}")
+
+    pending = [p for p in pos_rows if p[view_col] == "pending"]
+    accepted = [p for p in pos_rows if p[view_col] == "accepted"]
+    declined = [p for p in pos_rows if p[view_col] in ("declined", "hedged")]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Pending your review", len(pending))
+    c2.metric("Accepted", len(accepted))
+    c3.metric("Hedged or declined", len(declined))
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
+    if not pending:
+        st.markdown(pill("INBOX EMPTY", "ok") + " every proposal has your view recorded.", unsafe_allow_html=True)
     else:
-        st.info("No weekly miss-audits yet. Run `python -m services.sharepoint_watcher weekly-audit`.")
+        st.markdown(f"## Awaiting your view — {len(pending)}")
+        for p in pending:
+            with st.container(border=True):
+                top = st.columns([3, 1])
+                top[0].markdown(
+                    f"**{p['title']}**  {pill(p['family'], 'info')}",
+                    unsafe_allow_html=True,
+                )
+                top[1].markdown(
+                    f"<div style='text-align:right; font-family:IBM Plex Mono, monospace;'>"
+                    f"${(p['estimated_dollars'] or 0)/1_000_000:.2f}M</div>",
+                    unsafe_allow_html=True,
+                )
 
-# ---------------- Lavon-watch ----------------
+                st.markdown(
+                    f"<div style='color:#A8B2BC; font-size:0.9rem;'>"
+                    f"{(p['proposal'] or '')[:600]}{'…' if len(p['proposal'] or '') > 600 else ''}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
-with tabs[2]:
-    sig_rows = signals_recent()
-    digest_rows = digests_recent()
+                with st.expander("Risk & defensibility notes"):
+                    st.write(p["risk_notes"] or "(none captured)")
 
-    st.subheader("Recent signals")
-    if not sig_rows:
-        st.info("No signals ingested yet. Run `python -m services.signal_collectors ingest --url ... --source ...`.")
-    else:
-        min_impact = st.slider("Minimum impact score", 0, 5, 0)
-        filtered = [s for s in sig_rows if s["impact_score"] >= min_impact]
-        if not filtered:
-            st.caption(f"No signals at impact ≥ {min_impact}.")
-        else:
-            df = pd.DataFrame(filtered)[
-                ["impact_score", "kind", "source", "title",
-                 "occurred_on", "retrieved_at", "source_url"]
+                with st.form(key=f"adv-{p['id']}"):
+                    decision = st.radio(
+                        "Decision",
+                        ["accepted", "hedged", "declined"],
+                        horizontal=True,
+                        key=f"d-{p['id']}",
+                    )
+                    notes = st.text_area("Notes", key=f"n-{p['id']}", height=80)
+                    if st.form_submit_button("Record"):
+                        with cursor() as cur:
+                            cur.execute(
+                                f"UPDATE pf_positions SET {view_col} = %s, "
+                                f"{notes_col} = %s, updated_at = NOW() WHERE id = %s",
+                                (decision, notes or None, p["id"]),
+                            )
+                        st.cache_data.clear()
+                        st.success(f"Recorded {advisor_label}: {decision}")
+                        st.rerun()
+
+    if accepted:
+        st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+        st.markdown(f"## Your accepted positions — {len(accepted)}")
+        df = pd.DataFrame(
+            [
+                {
+                    "$": f"${(p['estimated_dollars'] or 0)/1_000_000:.2f}M",
+                    "family": p["family"],
+                    "title": p["title"],
+                    "incorporated_into": p["incorporated_into"] or "(pending)",
+                }
+                for p in accepted
             ]
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            st.caption("Click a signal title in `signals` to drill down.")
-            for s in filtered[:15]:
-                if s["impact_score"] >= 4:
-                    with st.expander(f"[{s['impact_score']}] {s['title']}"):
-                        st.markdown(
-                            f"- **Source:** {s['source']}\n"
-                            f"- **Kind:** {s['kind']}\n"
-                            f"- **Occurred:** {s['occurred_on']}\n"
-                            f"- **URL:** {s['source_url']}\n\n"
-                            f"{s['summary']}\n\n"
-                            f"**Impact rationale:** {s['impact_rationale']}"
-                        )
-
-    st.subheader("Digest history")
-    if digest_rows:
-        df = pd.DataFrame(digest_rows)
+        )
         st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No digests rendered yet.")
-
-    st.subheader("Ask")
-    question = st.text_input(
-        "Ask a question against the signals corpus",
-        placeholder="e.g. What's the council's posture on our MUD?",
-    )
-    if st.button("Ask") and question.strip():
-        with st.spinner("Sonnet 4.6 reading the corpus..."):
-            from services.signal_collectors.ask import ask as run_ask
-
-            result = run_ask(question.strip())
-        st.success(result["answer"])
-        st.caption(f"Consulted {result['n_signals_consulted']} signals from the corpus.")
