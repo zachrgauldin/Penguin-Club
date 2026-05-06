@@ -10,9 +10,12 @@ IBM Plex Mono) and density tweaks are injected via the CSS block below.
 """
 from __future__ import annotations
 
+import dataclasses
+import json
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -125,6 +128,68 @@ def impact_pill(score: int) -> str:
     if score >= 2:
         return pill(f"impact {score}", "info")
     return pill(f"impact {score}", "muted")
+
+
+def _result_to_jsonable(result: Any) -> Any:
+    if dataclasses.is_dataclass(result):
+        return dataclasses.asdict(result)
+    if hasattr(result, "__dict__"):
+        return {k: v for k, v in vars(result).items() if not k.startswith("_")}
+    return result
+
+
+def run_action(label: str, fn: Callable[..., Any], **kwargs: Any) -> None:
+    """Render a button that runs `fn(**kwargs)` synchronously inside an
+    st.status block. On success, clears the data cache and re-runs the
+    script so every view picks up the new state. Errors land in red
+    inside the status block; they don't crash the page."""
+    if st.button(label, key=f"action-{label}"):
+        with st.status(f"Running {label.lower()}…", expanded=True) as status:
+            try:
+                result = fn(**kwargs)
+                payload = _result_to_jsonable(result)
+                if isinstance(payload, dict):
+                    st.code(json.dumps(payload, indent=2, default=str), language="json")
+                else:
+                    st.write(payload)
+                status.update(label=f"{label} complete", state="complete", expanded=False)
+                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"{type(e).__name__}: {e}")
+                status.update(label=f"{label} failed", state="error", expanded=True)
+
+
+@st.cache_data(ttl=15)
+def last_run_for_source(source: str) -> datetime | None:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT MAX(started_at) AS last_run
+            FROM collector_runs
+            WHERE source = %s::signal_source AND status = 'ok'
+            """,
+            (source,),
+        )
+        row = cur.fetchone()
+    return row.get("last_run") if row else None
+
+
+@st.cache_data(ttl=15)
+def latest_digest(cadence: str) -> dict[str, Any] | None:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT period_start, period_end, signal_count, high_impact_count,
+                   digest_uri, sent_at
+            FROM lavon_digests
+            WHERE cadence = %s
+            ORDER BY sent_at DESC NULLS LAST, period_end DESC
+            LIMIT 1
+            """,
+            (cadence,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
 # ---------------- DB helpers (cached) ----------------
@@ -428,16 +493,120 @@ if role == "Principal":
 
     st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
 
+    open_pos = [
+        p for p in pos_rows
+        if "pending" in (p["bond_counsel_view"], p["municipal_advisor_view"], p["pid_admin_view"])
+    ]
+    upcoming = upcoming_dates(deal["id"], horizon_days=60)
+    critical_only = [r for r in upcoming if r["is_critical"]]
+    open_pos_high_value = sorted(
+        open_pos, key=lambda p: float(p.get("estimated_dollars") or 0), reverse=True
+    )[:3]
+    nearest_critical = sorted(critical_only, key=lambda r: r["value"])[:3]
+
+    attention_items: list[str] = []
+    if unacked_dates:
+        next_unacked = unacked_dates[0]
+        attention_items.append(
+            f'{pill("ACK", "critical")} '
+            f'<b>{next_unacked["value"]}</b> — {next_unacked["kind"]} on '
+            f'{next_unacked["contract_title"]} is agreed but unacked.'
+        )
+    for p in open_pos_high_value:
+        d = float(p.get("estimated_dollars") or 0)
+        attention_items.append(
+            f'{pill("SIGNOFF", "info")} '
+            f'<b>${d/1_000_000:.2f}M</b> — {p["title"]} '
+            f'<span style="color:#7A8794;">awaiting advisor view</span>'
+        )
+    for s in high_impact_recent[:2]:
+        attention_items.append(
+            f'{impact_pill(s["impact_score"])} '
+            f'<span style="color:#7A8794;">{s["source"]}</span> {s["title"]}'
+        )
+
+    if attention_items:
+        st.markdown("## What needs you")
+        st.markdown(
+            "<div style='border:1px solid #2D3F4D; border-left:3px solid #E8C547; "
+            "background:rgba(232,197,71,0.04); padding:14px 16px; border-radius:4px;'>"
+            + "<div style='line-height:2.0;'>"
+            + "<br>".join(attention_items)
+            + "</div></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+
     left, right = st.columns([3, 2])
 
     with left:
+        st.markdown("## Capacity vs. classified")
+        if inst_rows:
+            chart_rows = []
+            for i in inst_rows:
+                chart_rows.append(
+                    {
+                        "instrument": i["kind"],
+                        "series": "capacity",
+                        "value": float(i["capacity_remaining"] or 0),
+                    }
+                )
+                chart_rows.append(
+                    {
+                        "instrument": i["kind"],
+                        "series": "classified",
+                        "value": float(i["classified_eligible"] or 0),
+                    }
+                )
+            chart_df = pd.DataFrame(chart_rows)
+            chart = (
+                alt.Chart(chart_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X(
+                        "instrument:N",
+                        axis=alt.Axis(
+                            labelAngle=0, labelColor="#7A8794", title=None,
+                        ),
+                    ),
+                    xOffset=alt.XOffset("series:N"),
+                    y=alt.Y(
+                        "value:Q",
+                        axis=alt.Axis(
+                            format="$,.2s",
+                            labelColor="#7A8794",
+                            titleColor="#7A8794",
+                            title="USD",
+                            grid=True,
+                            gridColor="#1E2A33",
+                        ),
+                    ),
+                    color=alt.Color(
+                        "series:N",
+                        scale=alt.Scale(
+                            domain=["capacity", "classified"],
+                            range=["#2D3F4D", "#4DA3FF"],
+                        ),
+                        legend=alt.Legend(
+                            orient="top", labelColor="#A8B2BC", titleColor="#7A8794", title=None,
+                        ),
+                    ),
+                    tooltip=["instrument", "series", alt.Tooltip("value:Q", format="$,.0f")],
+                )
+                .properties(height=220)
+                .configure_view(stroke=None, fill="#0A1116")
+                .configure_axis(domainColor="#2D3F4D", tickColor="#2D3F4D")
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.markdown(pill("NO INSTRUMENTS", "muted"), unsafe_allow_html=True)
+
         st.markdown("## Open structuring proposals")
-        open_pos = [
-            p for p in pos_rows
-            if "pending" in (p["bond_counsel_view"], p["municipal_advisor_view"], p["pid_admin_view"])
-        ]
         if not open_pos:
-            st.markdown(pill("ALL CLEAR", "ok") + " every position has all three advisor views recorded.", unsafe_allow_html=True)
+            st.markdown(
+                pill("ALL CLEAR", "ok") + " every position has all three advisor views recorded.",
+                unsafe_allow_html=True,
+            )
         else:
             df = pd.DataFrame(
                 [
@@ -453,13 +622,14 @@ if role == "Principal":
                 ]
             )
             df["$"] = df["$"].map(lambda v: f"${v:,.0f}")
-            st.dataframe(df, use_container_width=True, hide_index=True, height=320)
+            st.dataframe(df, use_container_width=True, hide_index=True, height=300)
 
         st.markdown("## Upcoming critical dates")
-        upcoming = upcoming_dates(deal["id"], horizon_days=60)
-        critical_only = [r for r in upcoming if r["is_critical"]]
         if not critical_only:
-            st.markdown(pill("NONE", "muted") + " no critical dates in the next 60 days.", unsafe_allow_html=True)
+            st.markdown(
+                pill("NONE", "muted") + " no critical dates in the next 60 days.",
+                unsafe_allow_html=True,
+            )
         else:
             df = pd.DataFrame(
                 [
@@ -479,28 +649,46 @@ if role == "Principal":
     with right:
         st.markdown("## High-impact signals")
         if not high_impact_recent:
-            st.markdown(pill("QUIET", "muted") + " nothing scored 4+ in the recent window.", unsafe_allow_html=True)
+            st.markdown(
+                pill("QUIET", "muted") + " nothing scored 4+ in the recent window.",
+                unsafe_allow_html=True,
+            )
         else:
             for s in high_impact_recent:
                 st.markdown(
-                    f'<div style="margin-bottom:0.7rem; padding-bottom:0.7rem; border-bottom:1px solid #1E2A33;">'
-                    f'{impact_pill(s["impact_score"])} '
-                    f'<span style="color:#7A8794; font-size:0.78rem;">{s["source"]} · {s["occurred_on"] or "n/a"}</span>'
-                    f'<div style="font-weight:500; margin-top:2px;">{s["title"]}</div>'
-                    f'<div style="color:#A8B2BC; font-size:0.85rem; margin-top:2px;">{(s["summary"] or "")[:200]}</div>'
+                    f'<div style="margin-bottom:0.7rem; padding:0.6rem 0.7rem; '
+                    f'background:#0F1820; border:1px solid #1E2A33; border-radius:4px;">'
+                    f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+                    f'  {impact_pill(s["impact_score"])} '
+                    f'  <span style="color:#7A8794; font-size:0.74rem; font-family:IBM Plex Mono, monospace;">'
+                    f'    {s["source"]} · {s["occurred_on"] or "n/a"}'
+                    f'  </span>'
+                    f'</div>'
+                    f'<div style="font-weight:500; margin-top:6px;">{s["title"]}</div>'
+                    f'<div style="color:#A8B2BC; font-size:0.85rem; margin-top:4px;">'
+                    f'  {(s["summary"] or "")[:180]}'
+                    f'</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("## Capacity by instrument")
+        st.markdown("## Per-instrument detail")
         if inst_rows:
             for i in inst_rows:
                 cap = float(i["capacity_remaining"] or 0)
                 cl = float(i["classified_eligible"] or 0)
                 pct = (cl / cap * 100.0) if cap > 0 else 0.0
+                bar_pct = min(pct, 100)
                 st.markdown(
-                    f'<div class="kv-row"><span class="kv-key">{i["kind"]} · {i["name"]}</span>'
-                    f'<span class="kv-val">${cap/1_000_000:.2f}M cap · {pct:.0f}% classified</span></div>',
+                    f'<div style="margin-bottom:0.6rem;">'
+                    f'  <div class="kv-row" style="border:none; padding-bottom:2px;">'
+                    f'    <span class="kv-key">{i["kind"]} · {i["name"]}</span>'
+                    f'    <span class="kv-val">${cap/1_000_000:.2f}M · {pct:.0f}%</span>'
+                    f'  </div>'
+                    f'  <div style="height:4px; background:#1E2A33; border-radius:2px; overflow:hidden;">'
+                    f'    <div style="width:{bar_pct}%; height:100%; background:#4DA3FF;"></div>'
+                    f'  </div>'
+                    f'</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -578,14 +766,56 @@ elif role == "Analyst":
             st.dataframe(df, use_container_width=True, hide_index=True, height=380)
 
         st.markdown("## Quick actions")
-        st.caption("CLI commands. Wire to Streamlit click-to-run in V2.")
-        st.code(
-            "python -m services.reimbursement_api classify\n"
-            "python -m services.sharepoint_watcher weekly-audit\n"
-            "python -m services.signal_collectors scan\n"
-            "python -m services.signal_collectors digest-daily\n"
-            "python -m services.sharepoint_watcher push-calendar",
-            language="bash",
+        st.caption(
+            "Each runs synchronously and refreshes the page on completion. "
+            "Long-running jobs (classify, scan) lock the UI until they return."
+        )
+
+        max_lines = st.number_input(
+            "classify — max lines",
+            min_value=1, max_value=10000, value=200, step=50,
+            help="Cap on cost-ledger lines processed in this run.",
+        )
+        from services.reimbursement_api.classify import run_classify
+
+        run_action("Run classifier", run_classify, max_lines=int(max_lines))
+
+        force_scan = st.toggle("scan — ignore cadence (force)", value=False)
+        from services.signal_collectors.schedule import run_schedule
+
+        run_action("Run signal scan", run_schedule, force=force_scan)
+
+        from services.sharepoint_watcher.weekly_audit import run_weekly_audit
+
+        run_action("Run weekly miss-audit", run_weekly_audit)
+
+        from services.signal_collectors.digest import render_daily
+
+        def _daily_now() -> Any:
+            now = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            return render_daily(period_start=now, period_end=now + timedelta(days=1))
+
+        run_action("Render daily digest", _daily_now)
+
+        from services.sharepoint_watcher.calendar_push import push_calendar
+
+        run_action("Push to Outlook calendar", push_calendar, force=False)
+
+        last_scan = last_run_for_source("lavon_council")
+        last_daily = latest_digest("daily")
+        last_weekly = latest_digest("weekly")
+        st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:0.78rem; color:#7A8794; line-height:1.7;'>"
+            f"<b>last lavon_council scan:</b> {last_scan or '(never)'}<br>"
+            f"<b>last daily digest:</b> "
+            f"{(last_daily or {}).get('sent_at') or '(never)'} "
+            f"({(last_daily or {}).get('signal_count', 0)} signals)<br>"
+            f"<b>last weekly digest:</b> "
+            f"{(last_weekly or {}).get('sent_at') or '(never)'} "
+            f"({(last_weekly or {}).get('signal_count', 0)} signals)"
+            "</div>",
+            unsafe_allow_html=True,
         )
 
     st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
