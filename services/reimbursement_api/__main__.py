@@ -86,6 +86,58 @@ def cmd_registry(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_signoff(args: argparse.Namespace) -> int:
+    """Record an advisor view on a structuring proposal."""
+    from services.common.db import cursor
+
+    column_map = {
+        "bond_counsel": ("bond_counsel_view", "bond_counsel_notes"),
+        "municipal_advisor": ("municipal_advisor_view", "municipal_advisor_notes"),
+        "pid_admin": ("pid_admin_view", "pid_admin_notes"),
+    }
+    view_col, notes_col = column_map[args.advisor]
+
+    sql = f"""
+        UPDATE pf_positions
+        SET {view_col} = %s,
+            {notes_col} = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, title, family, {view_col}, {notes_col}
+    """
+    with cursor() as cur:
+        cur.execute(sql, (args.view, args.notes, args.position_id))
+        row = cur.fetchone()
+    if row is None:
+        print(f"No pf_positions row with id={args.position_id}", file=sys.stderr)
+        return 2
+    print(json.dumps(dict(row), indent=2, default=str))
+    return 0
+
+
+def cmd_review_classification(args: argparse.Namespace) -> int:
+    """Mark a ledger_classifications row reviewed/adjusted/rejected by an advisor."""
+    from services.common.db import cursor
+
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE ledger_classifications
+            SET advisor_review = %s,
+                advisor_notes = %s
+            WHERE id = %s
+            RETURNING id, advisor_review, eligible_amount, category
+            """,
+            (args.review, args.notes, args.classification_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        print(f"No ledger_classifications row with id={args.classification_id}", file=sys.stderr)
+        return 2
+    print(json.dumps(dict(row), indent=2, default=str))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="reimbursement_api")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -113,6 +165,31 @@ def main() -> int:
     p_reg = sub.add_parser("registry", help="Render the per-deal reimbursement registry one-pager")
     p_reg.add_argument("--deal", required=True)
     p_reg.set_defaults(func=cmd_registry)
+
+    p_so = sub.add_parser("signoff", help="Record an advisor view on a structuring proposal")
+    p_so.add_argument("--position-id", required=True)
+    p_so.add_argument(
+        "--advisor", required=True,
+        choices=["bond_counsel", "municipal_advisor", "pid_admin"],
+    )
+    p_so.add_argument(
+        "--view", required=True,
+        choices=["pending", "accepted", "hedged", "declined"],
+    )
+    p_so.add_argument("--notes", default=None)
+    p_so.set_defaults(func=cmd_signoff)
+
+    p_rc = sub.add_parser(
+        "review-classification",
+        help="Mark a ledger_classifications row approved/adjusted/rejected",
+    )
+    p_rc.add_argument("--classification-id", required=True)
+    p_rc.add_argument(
+        "--review", required=True,
+        choices=["pending", "approved", "adjusted", "rejected"],
+    )
+    p_rc.add_argument("--notes", default=None)
+    p_rc.set_defaults(func=cmd_review_classification)
 
     args = parser.parse_args()
     return args.func(args)

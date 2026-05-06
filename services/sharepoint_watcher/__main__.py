@@ -130,6 +130,59 @@ def cmd_takedown_forecast(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ack_date(args: argparse.Namespace) -> int:
+    """Mark a critical date acknowledged by the principal."""
+    from services.common.db import cursor
+
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE dates
+            SET human_acked = TRUE,
+                human_acked_at = NOW(),
+                human_acked_by = %s,
+                notes = COALESCE(notes, '') || CASE WHEN %s IS NULL THEN '' ELSE E'\n' || %s END,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, kind::text AS kind, value, is_critical, agreed, human_acked
+            """,
+            (args.by, args.notes, args.notes, args.date_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        print(f"No dates row with id={args.date_id}", file=sys.stderr)
+        return 2
+    print(json.dumps(dict(row), indent=2, default=str))
+    return 0
+
+
+def cmd_ack_audit(args: argparse.Namespace) -> int:
+    """Mark a weekly miss-audit acknowledged by the principal."""
+    from datetime import date
+
+    from services.common.db import cursor
+
+    week = date.fromisoformat(args.week_starting)
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE miss_audits
+            SET principal_acked = TRUE,
+                principal_acked_at = NOW()
+            WHERE week_starting = %s
+            RETURNING id, week_starting, flagged_count, low_confidence_count,
+                      unparseable_count, principal_acked
+            """,
+            (week,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        print(f"No miss_audits row for week_starting={args.week_starting}", file=sys.stderr)
+        return 2
+    print(json.dumps(dict(row), indent=2, default=str))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="sharepoint_watcher")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -171,6 +224,16 @@ def main() -> int:
     p_tf.add_argument("--deal", required=True)
     p_tf.add_argument("--horizon-quarters", type=int, default=16)
     p_tf.set_defaults(func=cmd_takedown_forecast)
+
+    p_ad = sub.add_parser("ack-date", help="Mark a critical date acknowledged by the principal")
+    p_ad.add_argument("--date-id", required=True)
+    p_ad.add_argument("--by", default=None, help="Email or initials of the acker")
+    p_ad.add_argument("--notes", default=None)
+    p_ad.set_defaults(func=cmd_ack_date)
+
+    p_aa = sub.add_parser("ack-audit", help="Mark a weekly miss-audit acknowledged by the principal")
+    p_aa.add_argument("--week-starting", required=True, help="ISO date for the audit week start")
+    p_aa.set_defaults(func=cmd_ack_audit)
 
     args = parser.parse_args()
     return args.func(args)
