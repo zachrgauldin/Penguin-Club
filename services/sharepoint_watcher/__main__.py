@@ -100,12 +100,11 @@ def cmd_weekly_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
-    print(
-        "[watch] TODO: Microsoft Graph delta poller. Use `extract` or `backfill` "
-        "against local PDFs until the SharePoint integration ships.",
-        file=sys.stderr,
-    )
-    return 1
+    from services.sharepoint_watcher.watcher import watch_once
+
+    result = watch_once(force=args.force, kind_hint=args.kind_hint)
+    print(json.dumps(result.__dict__, indent=2, default=str))
+    return 0 if result.files_failed == 0 else 3
 
 
 def cmd_takedown_forecast(args: argparse.Namespace) -> int:
@@ -218,7 +217,21 @@ def main() -> int:
     )
     p_wa.set_defaults(func=cmd_weekly_audit)
 
-    sub.add_parser("watch").set_defaults(func=cmd_watch)
+    p_w = sub.add_parser(
+        "watch",
+        help="Walk the SharePoint contracts folder and ingest new files",
+    )
+    p_w.add_argument("--force", action="store_true",
+                     help="Re-extract files already in the contracts table")
+    p_w.add_argument(
+        "--kind-hint",
+        choices=[
+            "psa", "loi", "lot_purchase", "takedown",
+            "dev_agreement", "reimbursement_agreement", "other",
+        ],
+        help="Optional contract-kind hint applied to every file in this run",
+    )
+    p_w.set_defaults(func=cmd_watch)
 
     p_tf = sub.add_parser("takedown-forecast", help="Per-builder cash-flow projection")
     p_tf.add_argument("--deal", required=True)
