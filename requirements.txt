@@ -9,4 +9,5 @@ msgraph-sdk>=1.5
 python-docx>=1.1
 openpyxl>=3.1
 streamlit>=1.40
+pandas>=2.0
 schedule>=1.2
