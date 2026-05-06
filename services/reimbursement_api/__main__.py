@@ -45,9 +45,25 @@ def cmd_structuring(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_ledger(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from services.reimbursement_api.ledger_loader import import_ledger
+
+    summary = import_ledger(
+        path=Path(args.path).expanduser().resolve(),
+        deal_slug=args.deal,
+    )
+    print(json.dumps(summary.__dict__, indent=2, default=str))
+    return 0
+
+
 def cmd_classify(args: argparse.Namespace) -> int:
-    print("[classify] TODO: Sonnet 4.6 classification with cached schemas. Not yet implemented.", file=sys.stderr)
-    return 1
+    from services.reimbursement_api.classify import run_classify
+
+    summary = run_classify(max_lines=args.max_lines)
+    print(json.dumps(summary.__dict__, indent=2, default=str))
+    return 0
 
 
 def cmd_package(args: argparse.Namespace) -> int:
@@ -66,7 +82,17 @@ def main() -> int:
 
     sub.add_parser("seed", help="Upsert deal/instruments/eligibility_rules from pilot config").set_defaults(func=cmd_seed)
     sub.add_parser("structuring", help="Generate frontier structuring proposals").set_defaults(func=cmd_structuring)
-    sub.add_parser("classify").set_defaults(func=cmd_classify)
+
+    p_il = sub.add_parser("import-ledger", help="Import a CSV/XLSX cost ledger into Postgres")
+    p_il.add_argument("--path", required=True)
+    p_il.add_argument("--deal", required=True)
+    p_il.set_defaults(func=cmd_import_ledger)
+
+    p_cls = sub.add_parser("classify", help="Capture mode: classify pending cost-ledger lines")
+    p_cls.add_argument("--max-lines", type=int, default=None,
+                       help="Cap on lines processed in this run (default: all pending)")
+    p_cls.set_defaults(func=cmd_classify)
+
     p_pkg = sub.add_parser("package")
     p_pkg.add_argument("--instrument", required=True)
     p_pkg.set_defaults(func=cmd_package)
