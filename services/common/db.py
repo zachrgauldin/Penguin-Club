@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
-from typing import Iterator
-
-import psycopg
-from psycopg.rows import dict_row
+from typing import Any, Iterator
 
 
-def connection() -> psycopg.Connection:
+def connection() -> Any:
+    import psycopg
+    from psycopg.rows import dict_row
+
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         raise RuntimeError("Missing required env var: DATABASE_URL")
@@ -16,7 +16,7 @@ def connection() -> psycopg.Connection:
 
 
 @contextmanager
-def cursor() -> Iterator[psycopg.Cursor]:
+def cursor() -> Iterator[Any]:
     with connection() as conn, conn.cursor() as cur:
         yield cur
         conn.commit()

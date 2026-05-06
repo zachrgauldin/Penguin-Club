@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from anthropic import Anthropic
+from typing import Any
 
 # Model IDs per the firm's standard rotation.
 # Opus 4.7 — Structuring + critical-date verification
@@ -11,5 +11,7 @@ SONNET = "claude-sonnet-4-6"
 HAIKU = "claude-haiku-4-5"
 
 
-def client() -> Anthropic:
+def client() -> Any:
+    from anthropic import Anthropic
+
     return Anthropic()

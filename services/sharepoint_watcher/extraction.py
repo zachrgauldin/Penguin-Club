@@ -206,15 +206,28 @@ def _normalize_source(s: str | None) -> str:
 
 
 def _source_overlap(a: str | None, b: str | None) -> bool:
-    """Lenient source-ref overlap: page numbers and section markers must coincide."""
+    """Source-refs match when the shorter ref's number sequence is a subset
+    of the longer one's. Two refs to 'p. 12, §4.3(b)' and 'p. 12,
+    Section 4.3(b)' agree because both pull [12, 4, 3]; refs to 'p. 12'
+    and 'p. 18' don't, because 12 isn't in [18, ...].
+
+    The kill-switch invariant skews conservative — false negatives land in
+    `needs_human` (operator reviews); false positives let mismatches through
+    silently. The number-subset rule keeps us on the conservative side.
+    """
+    if not a or not b:
+        return False
     na, nb = _normalize_source(a), _normalize_source(b)
     if not na or not nb:
         return False
     if na == nb:
         return True
-    a_nums = set(re.findall(r"\d+", a or ""))
-    b_nums = set(re.findall(r"\d+", b or ""))
-    return bool(a_nums & b_nums) and (na in nb or nb in na or len(na) >= 4 and na[:4] in nb)
+    a_nums = re.findall(r"\d+", a)
+    b_nums = re.findall(r"\d+", b)
+    if not a_nums or not b_nums:
+        return False
+    shorter, longer = (a_nums, b_nums) if len(a_nums) <= len(b_nums) else (b_nums, a_nums)
+    return all(n in longer for n in shorter)
 
 
 def match_dates(a: ContractExtraction, b: ContractExtraction) -> list[DateAgreement]:
