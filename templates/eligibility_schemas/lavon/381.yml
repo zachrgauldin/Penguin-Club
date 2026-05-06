@@ -1,0 +1,23 @@
+instrument:
+  kind: 381
+  name: "Collin County 381 Agreement"
+  jurisdiction: "Collin County"
+  statute_ref: "Tex. Local Gov't Code Ch. 381"
+
+categories:
+
+  grant.county_infrastructure:
+    description: "County participation in horizontal infrastructure benefiting the county"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — confirm county-benefit scope vs. city scope under 380."
+
+  grant.commercial_attraction:
+    description: "County performance grant tied to commercial CO / sales-tax / ad-valorem"
+    eligible: TBD
+    advisor_signoff: pending
+
+  grant.attractor_uses:
+    description: "Anchor uses generating county-level economic impact"
+    eligible: TBD
+    advisor_signoff: pending

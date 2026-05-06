@@ -1,0 +1,69 @@
+instrument:
+  kind: mud
+  name: "Lavon MUD No. TBD"
+  jurisdiction: "TCEQ-confirmed MUD"
+  statute_ref: "Tex. Water Code Ch. 49, Ch. 54; 30 TAC Ch. 293"
+
+categories:
+
+  # ---- HARD COSTS ----
+  hard_cost.water:
+    description: "Water supply, distribution, storage"
+    eligible: true
+    advisor_signoff: pending
+    statute_ref: "Water Code 49.218; 30 TAC 293.44"
+
+  hard_cost.wastewater:
+    description: "Wastewater collection, treatment, lift stations"
+    eligible: true
+    advisor_signoff: pending
+
+  hard_cost.drainage:
+    description: "Storm drainage, detention, channels"
+    eligible: true
+    advisor_signoff: pending
+
+  hard_cost.roads_30pct_cap:
+    description: "Roads attributable to MUD service area (TCEQ 30% rule)"
+    eligible: true
+    advisor_signoff: pending
+    cap_pct: 30.0
+    notes: "Standard TCEQ 30% road cap; confirm engineer's report carve-up vs. PID."
+
+  hard_cost.parks_recreation:
+    description: "Parks, trails, recreation facilities"
+    eligible: true
+    advisor_signoff: pending
+
+  # ---- SOFT COSTS ----
+  soft_cost.engineering:
+    description: "Engineering attributable to MUD-funded improvements"
+    eligible: true
+    advisor_signoff: pending
+
+  soft_cost.legal_bond_counsel:
+    eligible: true
+    advisor_signoff: pending
+
+  soft_cost.financing:
+    description: "Issuance costs, attorney general review, COI, underwriting"
+    eligible: true
+    advisor_signoff: pending
+
+  # ---- INDIRECT (frontier) ----
+  indirect.developer_carry:
+    description: "Interest on developer advances pending reimbursement"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — confirm rate + accrual basis in dev/reimbursement agreement."
+
+  # ---- NON-ELIGIBLE ----
+  non_eligible.vertical:
+    description: "Vertical construction, lot work above subgrade"
+    eligible: false
+    advisor_signoff: pending
+
+  non_eligible.developer_overhead:
+    description: "General developer overhead not attributable to authorized improvements"
+    eligible: false
+    advisor_signoff: pending

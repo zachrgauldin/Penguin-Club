@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+*.sqlite
+*.db
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+dist/
+build/
+*.egg-info/
+
+# Confidential firm data — never commit
+Inbound/
+db/seeds/firm_*
+db/seeds/*.csv
+db/seeds/*.xlsx
+db/seeds/*.docx
+db/seeds/*.pdf
+templates/eligibility_schemas/lavon/*_validated.yml
+*.private.*
