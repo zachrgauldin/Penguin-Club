@@ -67,13 +67,23 @@ def cmd_classify(args: argparse.Namespace) -> int:
 
 
 def cmd_package(args: argparse.Namespace) -> int:
-    print(f"[package] instrument={args.instrument} TODO: packet generation. Not yet implemented.", file=sys.stderr)
-    return 1
+    from services.reimbursement_api.packet import assemble_packet
+
+    summary = assemble_packet(
+        deal_slug=args.deal,
+        instrument_kind=args.instrument,
+        packet_number=args.packet_number,
+    )
+    print(json.dumps(summary.__dict__, indent=2, default=str))
+    return 0
 
 
 def cmd_registry(args: argparse.Namespace) -> int:
-    print("[registry] TODO: per-instrument capacity + position summary. Not yet implemented.", file=sys.stderr)
-    return 1
+    from services.reimbursement_api.registry import render_registry
+
+    snap = render_registry(deal_slug=args.deal)
+    print(json.dumps(snap.__dict__, indent=2, default=str))
+    return 0
 
 
 def main() -> int:
@@ -93,10 +103,16 @@ def main() -> int:
                        help="Cap on lines processed in this run (default: all pending)")
     p_cls.set_defaults(func=cmd_classify)
 
-    p_pkg = sub.add_parser("package")
-    p_pkg.add_argument("--instrument", required=True)
+    p_pkg = sub.add_parser("package", help="Assemble a draft reimbursement packet")
+    p_pkg.add_argument("--deal", required=True)
+    p_pkg.add_argument("--instrument", required=True, choices=["pid", "mud", "tirz", "380", "381"])
+    p_pkg.add_argument("--packet-number", default=None,
+                       help="Identifier for this packet (default: timestamp)")
     p_pkg.set_defaults(func=cmd_package)
-    sub.add_parser("registry").set_defaults(func=cmd_registry)
+
+    p_reg = sub.add_parser("registry", help="Render the per-deal reimbursement registry one-pager")
+    p_reg.add_argument("--deal", required=True)
+    p_reg.set_defaults(func=cmd_registry)
 
     args = parser.parse_args()
     return args.func(args)

@@ -109,8 +109,25 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_takedown_forecast(args: argparse.Namespace) -> int:
-    print("[takedown-forecast] TODO: per-builder cash flow projection.", file=sys.stderr)
-    return 1
+    from services.sharepoint_watcher.takedown_forecast import render_takedown_forecast
+
+    result = render_takedown_forecast(
+        deal_slug=args.deal,
+        horizon_quarters=args.horizon_quarters,
+    )
+    payload = {
+        "deal_slug": result.deal_slug,
+        "horizon_quarters": result.horizon_quarters,
+        "n_schedules": len(result.schedules),
+        "by_tier_totals": result.by_tier_totals,
+        "word_path": result.word_path,
+        "totals": {
+            "lots": sum(s.total_lots for s in result.schedules),
+            "revenue": sum(s.total_revenue for s in result.schedules),
+        },
+    }
+    print(json.dumps(payload, indent=2, default=str))
+    return 0
 
 
 def main() -> int:
@@ -149,7 +166,11 @@ def main() -> int:
     p_wa.set_defaults(func=cmd_weekly_audit)
 
     sub.add_parser("watch").set_defaults(func=cmd_watch)
-    sub.add_parser("takedown-forecast").set_defaults(func=cmd_takedown_forecast)
+
+    p_tf = sub.add_parser("takedown-forecast", help="Per-builder cash-flow projection")
+    p_tf.add_argument("--deal", required=True)
+    p_tf.add_argument("--horizon-quarters", type=int, default=16)
+    p_tf.set_defaults(func=cmd_takedown_forecast)
 
     args = parser.parse_args()
     return args.func(args)
