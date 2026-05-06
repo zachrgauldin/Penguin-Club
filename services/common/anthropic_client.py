@@ -8,7 +8,7 @@ from anthropic import Anthropic
 # Haiku 4.5 — cheap routing / triage
 OPUS = "claude-opus-4-7"
 SONNET = "claude-sonnet-4-6"
-HAIKU = "claude-haiku-4-5-20251001"
+HAIKU = "claude-haiku-4-5"
 
 
 def client() -> Anthropic:

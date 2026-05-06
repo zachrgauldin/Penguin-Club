@@ -1,57 +1,75 @@
 """Reimbursement service entry point.
 
-Routes:
-- structuring: surface frontier proposals across the four families, persist to pf_positions
-- classify: walk new cost_ledger rows, write per-instrument ledger_classifications
-- package: assemble the next reimbursement packet for an instrument
-- registry: per-deal one-pager
+Wave-1 commands implemented:
+  seed         — load pilot config + eligibility schemas into Postgres
+  structuring  — generate frontier proposals (Opus 4.7), persist to pf_positions, emit Word doc
 
-Each route is a thin wrapper that:
-1. Loads pilot config + active eligibility schemas (cached prompt prefix)
-2. Routes the right model (Opus for structuring, Sonnet for classify, Haiku for triage)
-3. Writes structured output back to Postgres via services.common.db
+Wave-1 commands stubbed:
+  classify     — Sonnet 4.6 cost-ledger classification
+  package      — packet assembly
+  registry     — per-deal one-pager
 """
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 
-from services.common.config import pilot_config
+
+def cmd_seed(args: argparse.Namespace) -> int:
+    from services.reimbursement_api.db_seed import seed_pilot
+
+    summary = seed_pilot()
+    print(json.dumps(summary, indent=2, default=str))
+    return 0
 
 
 def cmd_structuring(args: argparse.Namespace) -> int:
-    cfg = pilot_config()
-    print(f"[structuring] deal={cfg['deal']['slug']} — TODO: implement Opus 4.7 proposal generation.")
+    from services.reimbursement_api.structuring import run_structuring
+
+    run = run_structuring()
+    print(
+        json.dumps(
+            {
+                "deal": run.proposal_set.deal_slug,
+                "n_proposals": len(run.proposal_set.proposals),
+                "summary": run.proposal_set.summary,
+                "persisted_position_ids": run.persisted_position_ids,
+                "deliverable": str(run.deliverable_path),
+                "cache_read_tokens": run.cache_read_tokens,
+                "cache_creation_tokens": run.cache_creation_tokens,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
 def cmd_classify(args: argparse.Namespace) -> int:
-    cfg = pilot_config()
-    print(f"[classify] deal={cfg['deal']['slug']} — TODO: implement Sonnet 4.6 classification with cached schemas.")
-    return 0
+    print("[classify] TODO: Sonnet 4.6 classification with cached schemas. Not yet implemented.", file=sys.stderr)
+    return 1
 
 
 def cmd_package(args: argparse.Namespace) -> int:
-    print(f"[package] instrument={args.instrument} — TODO: implement packet generation.")
-    return 0
+    print(f"[package] instrument={args.instrument} TODO: packet generation. Not yet implemented.", file=sys.stderr)
+    return 1
 
 
 def cmd_registry(args: argparse.Namespace) -> int:
-    cfg = pilot_config()
-    print(f"[registry] deal={cfg['deal']['slug']} — TODO: render per-instrument capacity + position summary.")
-    return 0
+    print("[registry] TODO: per-instrument capacity + position summary. Not yet implemented.", file=sys.stderr)
+    return 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="reimbursement_api")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("structuring").set_defaults(func=cmd_structuring)
+    sub.add_parser("seed", help="Upsert deal/instruments/eligibility_rules from pilot config").set_defaults(func=cmd_seed)
+    sub.add_parser("structuring", help="Generate frontier structuring proposals").set_defaults(func=cmd_structuring)
     sub.add_parser("classify").set_defaults(func=cmd_classify)
-
     p_pkg = sub.add_parser("package")
     p_pkg.add_argument("--instrument", required=True)
     p_pkg.set_defaults(func=cmd_package)
-
     sub.add_parser("registry").set_defaults(func=cmd_registry)
 
     args = parser.parse_args()
