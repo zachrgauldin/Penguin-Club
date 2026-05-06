@@ -1,0 +1,40 @@
+instrument:
+  kind: tirz
+  name: "Lavon TIRZ No. TBD"
+  jurisdiction: "City of Lavon"
+  statute_ref: "Tex. Tax Code Ch. 311"
+
+categories:
+
+  hard_cost.public_improvements:
+    description: "Public works / improvements per project plan"
+    eligible: true
+    advisor_signoff: pending
+    statute_ref: "311.002(1)"
+
+  hard_cost.amenity_centers:
+    description: "Amenity centers / community facilities serving the Zone"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — include in project plan; verify ownership/access requirements."
+
+  soft_cost.project_costs:
+    description: "Planning, engineering, professional services per project plan"
+    eligible: true
+    advisor_signoff: pending
+
+  soft_cost.financing:
+    description: "Issuance costs, advisory, COI"
+    eligible: true
+    advisor_signoff: pending
+
+  indirect.developer_grant_on_increment:
+    description: "Performance grant funded from incremental tax revenue"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — pair with 380 grant on retained commercial."
+
+  non_eligible.vertical_private:
+    description: "Private vertical construction"
+    eligible: false
+    advisor_signoff: pending

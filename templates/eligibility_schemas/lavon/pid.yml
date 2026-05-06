@@ -1,0 +1,83 @@
+instrument:
+  kind: pid
+  name: "Lavon Pilot PID"
+  jurisdiction: "City of Lavon"
+  statute_ref: "Tex. Local Gov't Code Ch. 372"
+
+# Authoritative advisor signoffs land in Postgres (eligibility_rules.advisor_signoff = TRUE).
+# Anything left as `pending` is treated as draft by Capture mode.
+categories:
+
+  # ---- HARD COSTS ----
+  hard_cost.streets:
+    description: "Streets, sidewalks, signalization, ROW improvements"
+    eligible: true
+    advisor_signoff: pending
+    statute_ref: "372.003(b)(2)"
+    notes: ""
+
+  hard_cost.water_sewer:
+    description: "Water, wastewater, drainage, storm"
+    eligible: true
+    advisor_signoff: pending
+    statute_ref: "372.003(b)(3)"
+
+  hard_cost.parks_open_space:
+    description: "Parks, trails, open-space landscaping, amenity centers"
+    eligible: true
+    advisor_signoff: pending
+    statute_ref: "372.003(b)(5)"
+
+  hard_cost.landscaping:
+    description: "Median, entry-feature, perimeter landscaping"
+    eligible: true
+    advisor_signoff: pending
+
+  # ---- SOFT COSTS (advisor-bounded) ----
+  soft_cost.engineering:
+    description: "Civil engineering directly attributable to authorized improvements"
+    eligible: true
+    advisor_signoff: pending
+    cap_pct: null
+
+  soft_cost.legal:
+    description: "Counsel fees attributable to authorized improvements + bond issuance"
+    eligible: true
+    advisor_signoff: pending
+    cap_pct: null
+
+  soft_cost.financing_costs:
+    description: "Issuance costs, COI, underwriting, MA fees"
+    eligible: true
+    advisor_signoff: pending
+
+  # ---- INDIRECT (frontier) ----
+  indirect.developer_carry_interest:
+    description: "Interest on outstanding reimbursable balances at a stipulated rate"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — push for explicit interest-on-reimbursable balance language in Series 2026A bond order."
+
+  indirect.management_fee:
+    description: "Developer / project management fee allocable to PID-funded scope"
+    eligible: TBD
+    advisor_signoff: pending
+    cap_pct: null
+    notes: "STRUCTURING PROPOSAL — bond counsel + PID admin to opine on inclusion + cap."
+
+  indirect.marketing_attributable:
+    description: "Marketing of public improvements (entry features, parks) — narrow"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — narrow inclusion only; broad marketing is non-eligible."
+
+  # ---- NON-ELIGIBLE ----
+  non_eligible.builder_marketing:
+    description: "Lot marketing, builder co-op, model-home program"
+    eligible: false
+    advisor_signoff: pending
+
+  non_eligible.vertical_construction:
+    description: "Anything above-pad / vertical"
+    eligible: false
+    advisor_signoff: pending

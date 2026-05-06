@@ -1,0 +1,27 @@
+instrument:
+  kind: 380
+  name: "Lavon 380 Agreement"
+  jurisdiction: "City of Lavon"
+  statute_ref: "Tex. Local Gov't Code Ch. 380"
+
+# Ch. 380 is performance-based; "categories" are the grant triggers + uses,
+# not a strict eligible/non-eligible cost taxonomy.
+
+categories:
+
+  grant.commercial_attraction:
+    description: "Performance grant tied to commercial CO / sales-tax / ad-valorem"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — stack on retained commercial / outparcel monetization."
+
+  grant.public_infrastructure:
+    description: "City participation in horizontal infrastructure"
+    eligible: TBD
+    advisor_signoff: pending
+    notes: "STRUCTURING PROPOSAL — confirm non-overlap with PID/MUD eligible scope."
+
+  grant.attractor_uses:
+    description: "Performance grants for grocery, hospitality, entertainment, daycare anchors"
+    eligible: TBD
+    advisor_signoff: pending

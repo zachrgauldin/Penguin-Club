@@ -1,0 +1,147 @@
+# Pilot binding for the Lavon, TX MPC. The single source of truth that
+# wires Wave-1 agents to the deal: schemas, sources, calendars, advisors.
+#
+# Operator fills in the TODO blocks with real values; nothing else in the
+# repo should hard-code Lavon-specific values.
+
+deal:
+  slug: lavon-pilot
+  name: "Lavon Pilot MPC"
+  jurisdiction: "City of Lavon"
+  county: "Collin"
+  state: "TX"
+  status: horizontal       # prospect|under_contract|entitling|horizontal|vertical|built_out|sold
+  stage_notes: "Active construction; new stacked instruments being stood up."
+
+# Stacked instruments being stood up.
+instruments:
+  - kind: pid
+    name: "Lavon Pilot PID"
+    status: drafting
+    eligibility_schema: templates/eligibility_schemas/lavon/pid.yml
+    bond_orders:
+      - series: "Series 2026A"
+        status: drafting
+  - kind: mud
+    name: "Lavon MUD No. TBD"
+    status: drafting
+    eligibility_schema: templates/eligibility_schemas/lavon/mud.yml
+    bond_orders:
+      - series: "Series 2026A"
+        status: drafting
+  - kind: tirz
+    name: "Lavon TIRZ No. TBD"
+    status: proposed
+    eligibility_schema: templates/eligibility_schemas/lavon/tirz.yml
+  - kind: 380
+    name: "Lavon 380 Agreement"
+    status: proposed
+    eligibility_schema: templates/eligibility_schemas/lavon/380.yml
+  - kind: 381
+    name: "Collin County 381 Agreement"
+    status: proposed
+    eligibility_schema: templates/eligibility_schemas/lavon/381.yml
+
+advisors:
+  bond_counsel:
+    firm: "TODO"
+    contact: "TODO"
+    email: "TODO"
+  municipal_advisor:
+    firm: "TODO"
+    contact: "TODO"
+    email: "TODO"
+  pid_admin:
+    firm: "TODO"
+    contact: "TODO"
+    email: "TODO"
+
+# SharePoint binding for contracts watcher.
+sharepoint:
+  site_id_env: MS_GRAPH_SHAREPOINT_SITE_ID
+  drive_id_env: MS_GRAPH_DEALS_DRIVE_ID
+  contracts_path: "/Deals/Lavon-Pilot/Contracts/"
+  reimbursements_path: "/Deals/Lavon-Pilot/Reimbursements/"
+  digests_path: "/Deals/Lavon-Pilot/Digests/"
+
+# Which date kinds are critical (kill-switch, require human ack).
+contracts:
+  critical_date_kinds:
+    - closing
+    - em_go_hard
+    - takedown
+  reminder_offsets_days: [60, 30, 14, 7, 1]
+
+# Lavon-watch source bindings. Each entry maps a `signal_source` enum value
+# to the URLs/feeds the collector hits.
+signals:
+  sources:
+    lavon_council:
+      cadence: daily
+      urls:
+        - "https://www.cityoflavon.com/AgendaCenter"          # TODO confirm
+        - "https://www.cityoflavon.com/Archive.aspx"          # TODO confirm
+    lavon_pz:
+      cadence: daily
+      urls:
+        - "https://www.cityoflavon.com/AgendaCenter"          # TODO confirm
+    lavon_staff:
+      cadence: daily
+      urls:
+        - "https://www.cityoflavon.com/Directory.aspx"        # TODO confirm
+        - "linkedin:companies/city-of-lavon"                  # TODO confirm
+    lavon_elections:
+      cadence: daily_in_filing_window
+      urls:
+        - "https://www.cityoflavon.com/Elections"             # TODO confirm
+        - "https://www.collincountytx.gov/elections"          # TODO confirm
+    collin_county:
+      cadence: daily
+      urls:
+        - "https://www.collincountytx.gov/commissioners_court/agendas"  # TODO confirm
+    tceq_docket:
+      cadence: daily
+      urls:
+        - "https://www.tceq.texas.gov/agency/decisions/cs/dockets"      # TODO confirm
+        - "https://www.tceq.texas.gov/permitting/water_districts"       # TODO confirm
+    ntmwd:
+      cadence: weekly
+      urls:
+        - "https://www.ntmwd.com/board-of-directors"                    # TODO confirm
+    wylie_isd:
+      cadence: weekly
+      urls:
+        - "https://www.wylieisd.net/Page/19"                            # TODO confirm
+    community_isd:
+      cadence: weekly
+      urls:
+        - "https://www.communityisd.org/Page/3"                         # TODO confirm
+    txdot:
+      cadence: weekly
+      urls:
+        - "https://www.txdot.gov/projects/projects-studies/dallas.html" # TODO confirm
+    nctcog:
+      cadence: weekly
+      urls:
+        - "https://www.nctcog.org/trans"                                # TODO confirm
+
+  impact_thresholds:
+    teams_alert_at: 4
+    digest_high_impact_at: 3
+
+  digests:
+    daily_at: "07:00 America/Chicago"
+    weekly_at: "Sun 18:00 America/Chicago"
+    daily_template: templates/digest/lavon_daily.docx
+    weekly_template: templates/digest/lavon.docx
+
+# Outlook/Teams output bindings.
+outputs:
+  outlook_calendar: "lavon-pilot@TODO"
+  teams_channel: "Lavon Pilot — Risk Watch"
+  principal_review_folder: "/Deals/Lavon-Pilot/Reviews/"
+
+# Wave-1 design partner (analyst) — ~30 min/day for first 60 days.
+design_partner:
+  name: "TODO"
+  email: "TODO"
