@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 VALID_SOURCES = (
+    # Lavon-local
     "lavon_council",
     "lavon_pz",
     "lavon_staff",
@@ -31,6 +32,15 @@ VALID_SOURCES = (
     "community_isd",
     "txdot",
     "nctcog",
+    # Texas-statewide lege/agency/industry
+    "tx_lege",
+    "tceq_rulemaking",
+    "tx_ag",
+    "tx_comptroller",
+    "tab",
+    "agc_tx",
+    "uli",
+    "naiop_reca",
     "other",
 )
 

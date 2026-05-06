@@ -26,6 +26,9 @@ SignalKind = Literal[
     "corridor_action",
     "county_action",
     "election_filing",
+    "lege_bill",
+    "agency_rulemaking",
+    "industry_group_action",
     "other",
 ]
 
@@ -42,6 +45,14 @@ SignalSource = Literal[
     "community_isd",
     "txdot",
     "nctcog",
+    "tx_lege",
+    "tceq_rulemaking",
+    "tx_ag",
+    "tx_comptroller",
+    "tab",
+    "agc_tx",
+    "uli",
+    "naiop_reca",
     "other",
 ]
 
