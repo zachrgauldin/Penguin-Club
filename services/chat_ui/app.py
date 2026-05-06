@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -118,6 +119,31 @@ a:hover { text-decoration: underline !important; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 
+LIGHT_CSS = """
+<style>
+.stApp, .stApp > div { background-color: #FAFAFA !important; color: #1A1F26 !important; }
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div { background-color: #F0F2F5 !important; }
+[data-testid="stSidebar"] *, .stApp p, .stApp span, .stApp div, .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 { color: #1A1F26 !important; }
+[data-testid="stMetricValue"] { color: #1A1F26 !important; }
+[data-testid="stMetricLabel"] { color: #6A737D !important; }
+.stDataFrame table th { background-color: #E8ECF0 !important; color: #6A737D !important; }
+.kv-key { color: #6A737D !important; }
+.kv-val { color: #1A1F26 !important; }
+.kv-row { border-bottom-color: #DBE0E6 !important; }
+.section-rule { background: #DBE0E6 !important; }
+.stExpander { border-color: #DBE0E6 !important; background: #FFFFFF !important; }
+.stButton > button { border-color: #DBE0E6 !important; color: #1A1F26 !important; background: #FFFFFF !important; }
+.stButton > button:hover { border-color: #2563EB !important; background: rgba(37,99,235,0.06) !important; }
+.pill-warn   { background: rgba(184,84,26,0.1) !important; color: #B8541A !important; border: 1px solid rgba(184,84,26,0.4) !important; }
+.pill-info   { background: rgba(37,99,235,0.08) !important; color: #2563EB !important; border: 1px solid rgba(37,99,235,0.3) !important; }
+.pill-ok     { background: rgba(43,135,77,0.1) !important; color: #2B874D !important; border: 1px solid rgba(43,135,77,0.4) !important; }
+.pill-muted  { background: rgba(106,115,125,0.08) !important; color: #6A737D !important; border: 1px solid rgba(106,115,125,0.3) !important; }
+.pill-critical { background: #B8541A !important; color: #FFFFFF !important; }
+a { color: #2563EB !important; }
+</style>
+"""
+
+
 def pill(text: str, kind: str = "muted") -> str:
     return f'<span class="pill pill-{kind}">{text}</span>'
 
@@ -138,25 +164,91 @@ def _result_to_jsonable(result: Any) -> Any:
     return result
 
 
-def run_action(label: str, fn: Callable[..., Any], **kwargs: Any) -> None:
-    """Render a button that runs `fn(**kwargs)` synchronously inside an
-    st.status block. On success, clears the data cache and re-runs the
-    script so every view picks up the new state. Errors land in red
-    inside the status block; they don't crash the page."""
-    if st.button(label, key=f"action-{label}"):
-        with st.status(f"Running {label.lower()}…", expanded=True) as status:
-            try:
-                result = fn(**kwargs)
-                payload = _result_to_jsonable(result)
-                if isinstance(payload, dict):
-                    st.code(json.dumps(payload, indent=2, default=str), language="json")
-                else:
-                    st.write(payload)
-                status.update(label=f"{label} complete", state="complete", expanded=False)
-                st.cache_data.clear()
-            except Exception as e:
-                st.error(f"{type(e).__name__}: {e}")
-                status.update(label=f"{label} failed", state="error", expanded=True)
+class _AsyncJob:
+    """Background-thread holder living in st.session_state.
+    `done` is a threading.Event so the polling fragment can check
+    completion without holding a lock."""
+
+    def __init__(self, label: str, fn: Callable[..., Any], kwargs: dict[str, Any]) -> None:
+        self.label = label
+        self.started_at = datetime.utcnow()
+        self.done = threading.Event()
+        self.result: Any = None
+        self.error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, args=(fn, kwargs), daemon=True)
+
+    def _run(self, fn: Callable[..., Any], kwargs: dict[str, Any]) -> None:
+        try:
+            self.result = fn(**kwargs)
+        except BaseException as e:
+            self.error = e
+        finally:
+            self.done.set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+
+def _is_action_running() -> bool:
+    job = st.session_state.get("async_job")
+    return bool(job and not job.done.is_set())
+
+
+def run_action_async(label: str, fn: Callable[..., Any], **kwargs: Any) -> None:
+    """Render a button that launches `fn(**kwargs)` in a background thread.
+    The render_async_status fragment polls every 3 seconds and surfaces
+    completion. Only one action runs at a time — subsequent buttons
+    disable while a job is in flight."""
+    busy = _is_action_running()
+    if st.button(
+        label,
+        key=f"action-{label}",
+        disabled=busy,
+        help="An action is already running" if busy else None,
+    ):
+        job = _AsyncJob(label, fn, kwargs)
+        st.session_state["async_job"] = job
+        job.start()
+        st.rerun()
+
+
+@st.fragment(run_every=3)
+def render_async_status() -> None:
+    """Polled status surface. Fragment scope — only this block re-runs
+    on the timer, the rest of the page stays cached. On completion,
+    we trigger a full app rerun to refresh every cached view."""
+    job: _AsyncJob | None = st.session_state.get("async_job")
+    if job is None:
+        return
+
+    if job.done.is_set():
+        elapsed = (datetime.utcnow() - job.started_at).total_seconds()
+        if job.error is not None:
+            st.error(f"{job.label} failed after {elapsed:.0f}s: "
+                     f"{type(job.error).__name__}: {job.error}")
+        else:
+            st.success(f"{job.label} complete · {elapsed:.0f}s")
+            with st.expander("Result", expanded=False):
+                payload = _result_to_jsonable(job.result)
+                st.code(json.dumps(payload, indent=2, default=str), language="json")
+        del st.session_state["async_job"]
+        st.cache_data.clear()
+        st.rerun(scope="app")
+    else:
+        elapsed = (datetime.utcnow() - job.started_at).total_seconds()
+        st.markdown(
+            f'<div style="border:1px solid #2D3F4D; border-left:3px solid #4DA3FF; '
+            f'background:rgba(77,163,255,0.06); padding:10px 14px; border-radius:4px; '
+            f'margin-bottom:0.5rem;">'
+            f'<span style="font-weight:600;">⏳ {job.label}</span>'
+            f'<span style="color:#7A8794; margin-left:8px; font-family:IBM Plex Mono, monospace; '
+            f'font-size:0.78rem;">running · {elapsed:.0f}s</span>'
+            f'<div style="color:#7A8794; font-size:0.82rem; margin-top:4px;">'
+            f'Background thread. Other actions are disabled until this completes.'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 @st.cache_data(ttl=15)
@@ -172,6 +264,93 @@ def last_run_for_source(source: str) -> datetime | None:
         )
         row = cur.fetchone()
     return row.get("last_run") if row else None
+
+
+@st.cache_data(ttl=15)
+def signals_last_24h(min_impact: int = 4) -> list[dict[str, Any]]:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, kind::text AS kind, source::text AS source, title, summary,
+                   source_url, occurred_on, retrieved_at, impact_score, impact_rationale
+            FROM signals
+            WHERE retrieved_at >= NOW() - INTERVAL '24 hours'
+              AND impact_score >= %s
+            ORDER BY impact_score DESC, retrieved_at DESC
+            """,
+            (min_impact,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@st.cache_data(ttl=15)
+def positions_added_last_24h(deal_id: str) -> list[dict[str, Any]]:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, family, title, estimated_dollars,
+                   bond_counsel_view, municipal_advisor_view, pid_admin_view,
+                   created_at
+            FROM pf_positions
+            WHERE deal_id = %s
+              AND created_at >= NOW() - INTERVAL '24 hours'
+              AND 'pending' IN (bond_counsel_view, municipal_advisor_view, pid_admin_view)
+            ORDER BY estimated_dollars DESC NULLS LAST, created_at DESC
+            """,
+            (deal_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@st.cache_data(ttl=15)
+def dates_acked_last_24h(deal_id: str) -> list[dict[str, Any]]:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT d.id, d.kind::text AS kind, d.label, d.value, d.human_acked_at,
+                   c.title AS contract_title
+            FROM dates d
+            JOIN contracts c ON c.id = d.contract_id
+            WHERE c.deal_id = %s
+              AND d.human_acked = TRUE
+              AND d.human_acked_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY d.human_acked_at DESC
+            """,
+            (deal_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+@st.cache_data(ttl=60)
+def signal_volume_14d() -> pd.DataFrame:
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT date_trunc('day', retrieved_at)::date AS day,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN impact_score >= 4 THEN 1 ELSE 0 END) AS high_impact
+            FROM signals
+            WHERE retrieved_at >= NOW() - INTERVAL '14 days'
+            GROUP BY 1
+            ORDER BY 1 ASC
+            """
+        )
+        rows = cur.fetchall()
+
+    full_days = [
+        (datetime.utcnow().date() - timedelta(days=k)) for k in range(13, -1, -1)
+    ]
+    by_day = {r["day"]: dict(r) for r in rows}
+    return pd.DataFrame(
+        [
+            {
+                "day": d,
+                "total": int(by_day.get(d, {}).get("total", 0)),
+                "high_impact": int(by_day.get(d, {}).get("high_impact", 0)),
+            }
+            for d in full_days
+        ]
+    )
 
 
 @st.cache_data(ttl=15)
@@ -457,7 +636,20 @@ with st.sidebar:
         )
 
     st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+    light_mode = st.toggle(
+        "Light mode (presentation)",
+        value=st.session_state.get("light_mode", False),
+        key="light_mode",
+        help="Flips the palette to Modern Minimal for screen-shares + projectors.",
+    )
     st.caption("Cached views refresh every 15s.")
+
+if light_mode:
+    st.markdown(LIGHT_CSS, unsafe_allow_html=True)
+
+
+# Render the async-status block once, near the top of the main column.
+render_async_status()
 
 
 # ---------------- Shared queries / pre-computes ----------------
@@ -491,6 +683,56 @@ if role == "Principal":
     c4.metric("Unacked critical dates", len(unacked_dates))
     c5.metric("High-impact signals (recent)", len(high_impact_recent))
 
+    sparkline_df = signal_volume_14d()
+    if not sparkline_df.empty and sparkline_df["total"].sum() > 0:
+        spark_grid = "#E8ECF0" if light_mode else "#1E2A33"
+        spark_text = "#6A737D" if light_mode else "#7A8794"
+        spark_bg = "#FFFFFF" if light_mode else "#0A1116"
+        spark_total_color = "#2563EB" if light_mode else "#4DA3FF"
+        spark_high_color = "#B8541A" if light_mode else "#E8C547"
+
+        spark_long = sparkline_df.melt(
+            id_vars=["day"],
+            value_vars=["total", "high_impact"],
+            var_name="series",
+            value_name="count",
+        )
+        spark = (
+            alt.Chart(spark_long)
+            .mark_area(opacity=0.55, line=True)
+            .encode(
+                x=alt.X(
+                    "day:T",
+                    axis=alt.Axis(
+                        labelColor=spark_text, format="%b %d",
+                        title=None, grid=False, ticks=False,
+                    ),
+                ),
+                y=alt.Y(
+                    "count:Q",
+                    axis=alt.Axis(
+                        labelColor=spark_text, title="signals",
+                        titleColor=spark_text, grid=True, gridColor=spark_grid,
+                    ),
+                    stack=None,
+                ),
+                color=alt.Color(
+                    "series:N",
+                    scale=alt.Scale(
+                        domain=["total", "high_impact"],
+                        range=[spark_total_color, spark_high_color],
+                    ),
+                    legend=alt.Legend(orient="top", title=None,
+                                      labelColor=spark_text),
+                ),
+                tooltip=["day:T", "series:N", "count:Q"],
+            )
+            .properties(height=110)
+            .configure_view(stroke=None, fill=spark_bg)
+            .configure_axis(domainColor=spark_grid, tickColor=spark_grid)
+        )
+        st.altair_chart(spark, use_container_width=True)
+
     st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
 
     open_pos = [
@@ -502,40 +744,90 @@ if role == "Principal":
     open_pos_high_value = sorted(
         open_pos, key=lambda p: float(p.get("estimated_dollars") or 0), reverse=True
     )[:3]
-    nearest_critical = sorted(critical_only, key=lambda r: r["value"])[:3]
 
-    attention_items: list[str] = []
+    new_signals_24h = signals_last_24h(min_impact=4)
+    new_positions_24h = positions_added_last_24h(deal["id"])
+    acked_24h = dates_acked_last_24h(deal["id"])
+
+    needs_items: list[str] = []
     if unacked_dates:
         next_unacked = unacked_dates[0]
-        attention_items.append(
+        needs_items.append(
             f'{pill("ACK", "critical")} '
             f'<b>{next_unacked["value"]}</b> — {next_unacked["kind"]} on '
             f'{next_unacked["contract_title"]} is agreed but unacked.'
         )
     for p in open_pos_high_value:
         d = float(p.get("estimated_dollars") or 0)
-        attention_items.append(
+        needs_items.append(
             f'{pill("SIGNOFF", "info")} '
             f'<b>${d/1_000_000:.2f}M</b> — {p["title"]} '
             f'<span style="color:#7A8794;">awaiting advisor view</span>'
         )
     for s in high_impact_recent[:2]:
-        attention_items.append(
+        needs_items.append(
             f'{impact_pill(s["impact_score"])} '
             f'<span style="color:#7A8794;">{s["source"]}</span> {s["title"]}'
         )
 
-    if attention_items:
-        st.markdown("## What needs you")
-        st.markdown(
-            "<div style='border:1px solid #2D3F4D; border-left:3px solid #E8C547; "
-            "background:rgba(232,197,71,0.04); padding:14px 16px; border-radius:4px;'>"
-            + "<div style='line-height:2.0;'>"
-            + "<br>".join(attention_items)
-            + "</div></div>",
-            unsafe_allow_html=True,
+    diff_items: list[str] = []
+    for s in new_signals_24h[:3]:
+        diff_items.append(
+            f'{impact_pill(s["impact_score"])} '
+            f'<span style="color:#7A8794;">{s["source"]}</span> {s["title"]}'
         )
-        st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+    for p in new_positions_24h[:3]:
+        d = float(p.get("estimated_dollars") or 0)
+        diff_items.append(
+            f'{pill("NEW", "info")} '
+            f'<b>${d/1_000_000:.2f}M</b> — {p["title"]} '
+            f'<span style="color:#7A8794;">awaiting advisor view</span>'
+        )
+    for d_row in acked_24h[:3]:
+        diff_items.append(
+            f'{pill("ACKED", "ok")} '
+            f'<b>{d_row["value"]}</b> — {d_row["kind"]} on '
+            f'{d_row["contract_title"]} '
+            f'<span style="color:#7A8794;">marked acknowledged</span>'
+        )
+
+    panel_l, panel_r = st.columns(2)
+
+    with panel_l:
+        st.markdown("## What needs you")
+        if needs_items:
+            st.markdown(
+                "<div style='border:1px solid #2D3F4D; border-left:3px solid #E8C547; "
+                "background:rgba(232,197,71,0.04); padding:14px 16px; border-radius:4px;'>"
+                "<div style='line-height:2.0;'>"
+                + "<br>".join(needs_items)
+                + "</div></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                pill("ALL CLEAR", "ok") + " no open action items.",
+                unsafe_allow_html=True,
+            )
+
+    with panel_r:
+        st.markdown("## Changed in last 24h")
+        if diff_items:
+            st.markdown(
+                "<div style='border:1px solid #2D3F4D; border-left:3px solid #4DA3FF; "
+                "background:rgba(77,163,255,0.04); padding:14px 16px; border-radius:4px;'>"
+                "<div style='line-height:2.0;'>"
+                + "<br>".join(diff_items)
+                + "</div></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                pill("QUIET", "muted") + " no new signals, positions, or acks since yesterday.",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
 
     left, right = st.columns([3, 2])
 
@@ -559,6 +851,12 @@ if role == "Principal":
                     }
                 )
             chart_df = pd.DataFrame(chart_rows)
+            chart_text = "#6A737D" if light_mode else "#7A8794"
+            chart_grid = "#E8ECF0" if light_mode else "#1E2A33"
+            chart_bg = "#FFFFFF" if light_mode else "#0A1116"
+            chart_legend = "#1A1F26" if light_mode else "#A8B2BC"
+            cap_bar = "#CBD5DD" if light_mode else "#2D3F4D"
+            classified_bar = "#2563EB" if light_mode else "#4DA3FF"
             chart = (
                 alt.Chart(chart_df)
                 .mark_bar()
@@ -566,7 +864,7 @@ if role == "Principal":
                     x=alt.X(
                         "instrument:N",
                         axis=alt.Axis(
-                            labelAngle=0, labelColor="#7A8794", title=None,
+                            labelAngle=0, labelColor=chart_text, title=None,
                         ),
                     ),
                     xOffset=alt.XOffset("series:N"),
@@ -574,28 +872,29 @@ if role == "Principal":
                         "value:Q",
                         axis=alt.Axis(
                             format="$,.2s",
-                            labelColor="#7A8794",
-                            titleColor="#7A8794",
+                            labelColor=chart_text,
+                            titleColor=chart_text,
                             title="USD",
                             grid=True,
-                            gridColor="#1E2A33",
+                            gridColor=chart_grid,
                         ),
                     ),
                     color=alt.Color(
                         "series:N",
                         scale=alt.Scale(
                             domain=["capacity", "classified"],
-                            range=["#2D3F4D", "#4DA3FF"],
+                            range=[cap_bar, classified_bar],
                         ),
                         legend=alt.Legend(
-                            orient="top", labelColor="#A8B2BC", titleColor="#7A8794", title=None,
+                            orient="top", labelColor=chart_legend,
+                            titleColor=chart_text, title=None,
                         ),
                     ),
                     tooltip=["instrument", "series", alt.Tooltip("value:Q", format="$,.0f")],
                 )
                 .properties(height=220)
-                .configure_view(stroke=None, fill="#0A1116")
-                .configure_axis(domainColor="#2D3F4D", tickColor="#2D3F4D")
+                .configure_view(stroke=None, fill=chart_bg)
+                .configure_axis(domainColor=chart_grid, tickColor=chart_grid)
             )
             st.altair_chart(chart, use_container_width=True)
         else:
@@ -778,16 +1077,16 @@ elif role == "Analyst":
         )
         from services.reimbursement_api.classify import run_classify
 
-        run_action("Run classifier", run_classify, max_lines=int(max_lines))
+        run_action_async("Run classifier", run_classify, max_lines=int(max_lines))
 
         force_scan = st.toggle("scan — ignore cadence (force)", value=False)
         from services.signal_collectors.schedule import run_schedule
 
-        run_action("Run signal scan", run_schedule, force=force_scan)
+        run_action_async("Run signal scan", run_schedule, force=force_scan)
 
         from services.sharepoint_watcher.weekly_audit import run_weekly_audit
 
-        run_action("Run weekly miss-audit", run_weekly_audit)
+        run_action_async("Run weekly miss-audit", run_weekly_audit)
 
         from services.signal_collectors.digest import render_daily
 
@@ -795,11 +1094,11 @@ elif role == "Analyst":
             now = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             return render_daily(period_start=now, period_end=now + timedelta(days=1))
 
-        run_action("Render daily digest", _daily_now)
+        run_action_async("Render daily digest", _daily_now)
 
         from services.sharepoint_watcher.calendar_push import push_calendar
 
-        run_action("Push to Outlook calendar", push_calendar, force=False)
+        run_action_async("Push to Outlook calendar", push_calendar, force=False)
 
         last_scan = last_run_for_source("lavon_council")
         last_daily = latest_digest("daily")
