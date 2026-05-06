@@ -99,20 +99,19 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    print(
-        "[scan] TODO: per-source HTML scrapers + cadence scheduler. "
-        "Use `ingest --url ...` against a confirmed URL until per-source scrapers ship.",
-        file=sys.stderr,
-    )
-    return 1
+    from services.signal_collectors.schedule import run_schedule
+
+    summary = run_schedule(force=args.force)
+    print(json.dumps(summary, indent=2, default=str))
+    return 0
 
 
 def cmd_scan_source(args: argparse.Namespace) -> int:
-    print(
-        f"[scan-source] source={args.source} TODO: per-source scraper not implemented.",
-        file=sys.stderr,
-    )
-    return 1
+    from services.signal_collectors.schedule import run_schedule
+
+    summary = run_schedule(only_source=args.source, force=args.force)
+    print(json.dumps(summary, indent=2, default=str))
+    return 0
 
 
 def main() -> int:
@@ -137,10 +136,13 @@ def main() -> int:
     p_ask.add_argument("question")
     p_ask.set_defaults(func=cmd_ask)
 
-    sub.add_parser("scan").set_defaults(func=cmd_scan)
+    p_scan = sub.add_parser("scan", help="Run every due collector per pilot config cadence")
+    p_scan.add_argument("--force", action="store_true", help="Run regardless of last_run age")
+    p_scan.set_defaults(func=cmd_scan)
 
-    p_ss = sub.add_parser("scan-source")
+    p_ss = sub.add_parser("scan-source", help="Run collectors for a single source")
     p_ss.add_argument("--source", required=True, choices=VALID_SOURCES)
+    p_ss.add_argument("--force", action="store_true")
     p_ss.set_defaults(func=cmd_scan_source)
 
     args = parser.parse_args()
